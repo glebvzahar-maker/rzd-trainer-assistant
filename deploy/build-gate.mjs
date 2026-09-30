@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const source = join(here, '..', 'index.html');
-const target = join(here, 'api', 'page.js');
+const target = join(here, 'api', '_page.js');
 
 const html = readFileSync(source, 'utf8');
 
@@ -37,10 +37,10 @@ if (process.argv.includes('--check')) {
   let current = null;
   try { current = readFileSync(target, 'utf8'); } catch { /* нет файла */ }
   if (current !== built) {
-    console.error('page.js устарел: index.html изменился. Запустите node deploy/build-gate.mjs');
+    console.error('_page.js устарел: index.html изменился. Запустите node deploy/build-gate.mjs');
     process.exit(1);
   }
-  console.log('page.js актуален');
+  console.log('_page.js актуален');
 } else {
   writeFileSync(target, built);
   console.log(`page.js собран: ${(html.length / 1024).toFixed(0)} КБ страницы`);

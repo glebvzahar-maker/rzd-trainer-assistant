@@ -16,7 +16,7 @@
 // password is a redeploy.
 
 const crypto = require('crypto');
-const PAGE_HTML = require('./page');
+const PAGE_HTML = require('./_page');
 
 const COOKIE = 'gate';
 const TTL_MS = 12 * 60 * 60 * 1000; // 12 hours

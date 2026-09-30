@@ -15,7 +15,7 @@ _archive/
 
 # Собранная функция: 274 КБ страницы внутри JS. Восстанавливается
 # командой  node deploy/build-gate.mjs
-deploy/api/page.js
+deploy/api/_page.js
 
 # Секреты (если решите хранить локально, а не в переменной Vercel)
 .env
