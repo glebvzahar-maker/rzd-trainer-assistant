@@ -177,13 +177,38 @@ for sel, bodies in sorted(light_rules.items()):
                     fails.append(f'{sel}: color {m.group(0)} — нет переопределения')
                     print(f'  FAIL {sel[:46]:46} {m.group(0)}')
 
-print('\n=== 3. токены объявлены во всех темах ===')
+print('\n=== 3. токены, которые читают компоненты, разрешимы в каждой теме ===')
+# A token only has to be *resolvable* in a theme, not literally restated there:
+# `:root` is the base layer, so everything it declares cascades into every theme.
+# What must never happen is a component reading `var(--x)` that no layer in the
+# chain declares -- that silently falls back to `unset`.
+CONSUMED = set(re.findall(r'var\((--[\w-]+)', css))
+undeclared = CONSUMED - LIGHT
+if undeclared:
+    fails.append(f'компоненты читают необъявленные токены: {sorted(undeclared)}')
+    print(f'  FAIL необъявленные: {sorted(undeclared)}')
+else:
+    print(f'  OK все {len(CONSUMED)} читаемых токенов объявлены в :root')
+
 for name, s in (('тёмной', DARK), ('солнечной', CONTRAST)):
-    for tok in sorted(LIGHT - s):
-        if tok.startswith('--r-'):
-            continue
-        fails.append(f'{tok} отсутствует в {name} теме')
-        print(f'  FAIL {tok}')
+    missing = sorted(tok for tok in CONSUMED if tok not in (LIGHT | s))
+    if missing:
+        fails.append(f'{missing} не разрешимы в {name} теме')
+        print(f'  FAIL {name}: {missing}')
+    else:
+        restated = len(CONSUMED & s)
+        print(f'  OK {name}: все {len(CONSUMED)} разрешимы '
+              f'({restated} переопределено, остальное наследуется)')
+
+# The Wisprflow brand palette is the single source of truth and lives in :root.
+BRAND = {'--lumen', '--vast', '--dawn', '--signal', '--glow', '--flare', '--pulse',
+         '--fathom', '--font-body', '--font-display'}
+absent = sorted(BRAND - LIGHT)
+if absent:
+    fails.append(f'бренд-палитра утрачена: {absent}')
+    print(f'  FAIL бренд-палитра: {absent}')
+else:
+    print(f'  OK бренд-палитра на месте ({len(BRAND)} токенов) в :root')
 
 print('\n=== 4. тема задаётся через data-theme, а не media query ===')
 if 'prefers-color-scheme' in css:
