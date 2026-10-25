@@ -72,7 +72,8 @@
 | `index.html` | сам лендинг, единственный файл, который нужен для работы |
 | `Активности_для_лендинга.md` | тот же каталог в тексте, для чтения без браузера |
 | `Agent.md` | описание проекта и правила работы с данными |
-| `deploy/` | публикация на Vercel за паролем |
+| `deploy/` | публикация: сборка страницы для Vercel и для GitHub Pages |
+| `.github/workflows/pages.yml` | автопубликация на GitHub Pages при пуше в `main` |
 
 ## Сборка каталога
 
@@ -85,15 +86,32 @@ python3 .build_catalog.py                            # пересобрать .m
 python3 .verify_sync.py                              # проверить соответствие
 python3 .verify_contrast.py                          # проверить темы
 node deploy/build-gate.mjs                           # собрать функцию для Vercel
+node deploy/build-pages.mjs --password 3321          # собрать страницу для Pages
 ```
 
 ## Публикация
 
-**Живая ссылка:** https://rzd-trainer-assistant.vercel.app — вход по паролю.
+Две площадки, каждая со своим способом закрыть вход. Выбирать по одному
+вопросу: **важно ли, чтобы содержимое каталога нельзя было получить без
+пароля?**
+
+| | Vercel | GitHub Pages |
+|---|---|---|
+| Ссылка | https://rzd-trainer-assistant.vercel.app | https://glebvzahar-maker.github.io/rzd-trainer-assistant |
+| Где проверяется пароль | на сервере, в serverless-функции | в браузере, на странице |
+| Каталог без пароля | **не отдаётся вообще** | лежит в том же файле и читается без входа |
+| Что защищает | закрывает содержимое от посторонних | закрывает от случайного взгляда, но не от того, кто умеет смотреть исходник |
+| Требования | тариф Hobby, аккаунт настроен | репозиторий должен быть публичным, либо тариф Pro ($4/мес) |
+
+**Если содержимое нужно держать закрытым — Vercel.** GitHub Pages раздаёт
+статику и проверять пароль на сервере не умеет: страница лежит по
+открытому адресу, и тот, кто её запросит, получит каталог вместе с формой
+входа. Клиентский гейт держит каталог закрытым для обычного посетителя, но
+не для того, кто целенаправленно его скачает.
 
 Репозиторий приватный: https://github.com/glebvzahar-maker/rzd-trainer-assistant
 
-### Как устроена защита
+### Vercel: как устроена защита
 
 Штатная парольная защита Vercel доступна только на тарифе Pro ($20/мес за
 проект), а аккаунт на Hobby. Поэтому доступ закрыт собственной serverless-функцией
@@ -112,7 +130,9 @@ node deploy/build-gate.mjs                           # собрать функц
 при его перезапуске, поэтому защита останавливает перебор, но не заменяет
 ограничение по IP на уровне сети. Смена пароля — передеплой.
 
-### Правка и передеплой
+Текущий пароль: **3321**.
+
+### Vercel: правка и передеплой
 
 ```bash
 # после изменений в index.html
@@ -126,9 +146,83 @@ vercel --prod --yes
 
 ```bash
 cd deploy
-vercel env rm GATE_PASSWORD production
-vercel env add GATE_PASSWORD production   # ввести новый
+vercel env add GATE_PASSWORD production --value <новый> --sensitive --force
 vercel --prod --yes
+```
+
+Если деплой отклоняется со статусом `BLOCKED` и сообщением *«the commit author
+doesn't have permission to create deployments»* — Vercel сверяет адрес автора
+последнего коммита с подтверждённым адресом аккаунта. Проверьте:
+
+```bash
+git config user.email   # должен совпадать с адресом аккаунта Vercel
+```
+
+### GitHub Pages: как устроена защита
+
+`deploy/build-pages.mjs` собирает из `index.html` страницу для Pages:
+
+- в страницу встраивается вход по паролю: каталог закрыт до ввода, пароль
+  сверяется с PBKDF2-SHA256 (210 000 итераций) против соли и хеша, вход
+  запоминается в браузере на 30 дней;
+- сам пароль в файле не хранится — только соль и хеш;
+- в исходном `index.html` гейт выключен: локальный файл открывается без
+  пароля, а на Vercеl пароль проверяет serverless-функция.
+
+```bash
+node deploy/build-pages.mjs --password 3321   # собирает страницу в docs/
+```
+
+#### Включение Pages
+
+GitHub Pages не работает с приватным репозиторием на бесплатном тарифе:
+
+```
+Your current plan does not support GitHub Pages for this repository.
+```
+
+Два пути:
+
+**1. Публичный репозиторий** (бесплатно). Контент каталога станет виден
+всем, кто откроет репозиторий, — вместе с исходником `index.html`, где лежит
+тот же каталог. Гейт при этом не даёт ничего: он закрывает форму, а не файл.
+
+```bash
+gh repo edit --visibility public
+gh api --method POST repos/glebvzahar-maker/rzd-trainer-assistant/pages \
+  -F "source[branch]=gh-pages" -F "source[path]=/" -f build_type=legacy
+```
+
+**2. Тариф GitHub Pro** ($4/мес). Репозиторий остаётся приватным, Pages
+работает. Публичной остаётся только сама страница по адресу, и её содержимое
+достаётся тому, кто этот адрес знает, — закрывать каталог от этого может
+только Vercel.
+
+Оба способа требуют, чтобы репозиторий не содержал чувствительного контента
+в открытом виде. Если это неприемлемо, оставайтесь на Vercel.
+
+#### Ветка gh-pages и воркфлоу
+
+Страница уже собрана и лежит в ветке `gh-pages` — этого достаточно, чтобы
+включить Pages по первому способу. Воркфлоу `.github/workflows/pages.yml`
+собирает и публикует страницу автоматически при каждом пуше в `main`, но
+файл воркфлоя не проходит push токеном без scope `workflow`:
+
+```bash
+gh auth refresh -h github.com -s workflow   # подтвердить в браузере
+git push origin main
+```
+
+Пароль для воркфлоу берётся из секрета репозитория `GATE_PASSWORD`
+(Settings → Secrets and variables → Actions), а не из файла.
+
+Пересборка ветки `gh-pages` после правок:
+
+```bash
+node deploy/build-pages.mjs --password 3321 --out docs
+cd docs && git init -q -b gh-pages && git add index.html \
+  && git commit -m "Сборка страницы" \
+  && git push -f https://github.com/glebvzahar-maker/rzd-trainer-assistant.git gh-pages
 ```
 
 ## Источники
