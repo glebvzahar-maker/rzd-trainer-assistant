@@ -27,6 +27,111 @@
             document.documentElement.setAttribute('data-theme', t);
         })();
     </script>
+    <!-- Пароль на вход.
+         По умолчанию выключен: локальный файл открывается без пароля, а на
+         Vercel пароль проверяет serverless-функция (deploy/api/gate.js) — там
+         проверка настоящая, серверная, и страница без пароля вообще не
+         отдаётся. GitHub Pages раздаёт только статику и проверять пароль на
+         сервере не умеет, поэтому для него гейт включается на клиенте
+         (deploy/build-pages.mjs). Клиентский гейт — блокировка в браузере,
+         а не защита: содержимое страницы лежит в том же файле. -->
+    <script id="client-gate-config">
+        window.__GATE__ = { enabled: false, salt: '', sessionSalt: '', iterations: 0, hash: '', days: 30 };
+    </script>
+    <script id="client-gate">
+    (function () {
+        var cfg = window.__GATE__ || {};
+        if (!cfg.enabled) return;                 // режим без пароля
+
+        var KEY = 'rzd-trainer-gate';
+        var root = document.documentElement;
+
+        function decode(b64) {
+            var bin = atob(b64), out = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+            return out;
+        }
+        function encode(bytes) {
+            var s = '';
+            for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+            return btoa(s);
+        }
+        function derive(password, saltB64) {
+            return crypto.subtle.importKey(
+                'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']
+            ).then(function (key) {
+                return crypto.subtle.deriveBits(
+                    { name: 'PBKDF2', salt: decode(saltB64), iterations: cfg.iterations, hash: 'SHA-256' },
+                    key, 256);
+            }).then(function (bits) { return new Uint8Array(bits); });
+        }
+        function equal(a, b) {
+            if (a.length !== b.length) return false;
+            var diff = 0;
+            for (var i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+            return diff === 0;
+        }
+        function sessionValid() {
+            try {
+                var rec = JSON.parse(localStorage.getItem(KEY) || 'null');
+                return !!rec && typeof rec.token === 'string' && rec.until > Date.now();
+            } catch (e) { return false; }
+        }
+        function unlock() {
+            window.__GATE_OK__ = true;
+            root.removeAttribute('data-gate');
+            // приложение отложило запуск до входа
+            if (typeof window.__GATE_BOOT__ === 'function') {
+                var boot = window.__GATE_BOOT__;
+                window.__GATE_BOOT__ = null;
+                boot();
+            }
+        }
+
+        if (sessionValid()) { unlock(); return; }  // вход сохранён — сразу открываем
+
+        root.setAttribute('data-gate', 'lock');
+
+        document.addEventListener('DOMContentLoaded', function () {
+            var form = document.getElementById('gateForm');
+            var input = document.getElementById('gatePass');
+            var err = document.getElementById('gateErr');
+            if (!form || !input) return;
+
+            form.addEventListener('submit', function (ev) {
+                ev.preventDefault();
+                var value = input.value;
+                err.textContent = '';
+                if (!value) { err.textContent = 'Введите пароль.'; input.focus(); return; }
+                if (!crypto.subtle) {
+                    err.textContent = 'Браузер не умеет проверять пароль: нужен HTTPS и современный браузер.';
+                    return;
+                }
+                derive(value, cfg.salt).then(function (bits) {
+                    if (!equal(bits, decode(cfg.hash))) {
+                        err.textContent = 'Неверный пароль.';
+                        input.value = '';
+                        input.focus();
+                        return null;
+                    }
+                    return derive(value, cfg.sessionSalt).then(function (tok) {
+                        try {
+                            localStorage.setItem(KEY, JSON.stringify({
+                                token: encode(tok),
+                                until: Date.now() + cfg.days * 86400000
+                            }));
+                        } catch (e) { /* приватный режим — просто не запоминаем */ }
+                        unlock();
+                    });
+                }).catch(function () {
+                    err.textContent = 'Не удалось проверить пароль. Проверьте, что страница открыта по HTTPS.';
+                });
+            });
+
+            setTimeout(function () { input.focus(); }, 30);
+        });
+    })();
+    </script>
     <noscript>
         <div style="padding:2rem;text-align:center">
             <h1>Требуется JavaScript</h1>
@@ -239,9 +344,10 @@
             outline-offset: 2px;
         }
 
+        /* the three themes are told apart by their words: on a phone the icons
+           alone are indistinguishable, and `title` does not work on touch */
         @media (max-width: 520px) {
-            .ts-label { display: none; }
-            .theme-switch button { padding: .45rem .7rem; font-size: 1rem; }
+            .theme-switch button { padding: .45rem .7rem; font-size: .82rem; gap: .3rem; }
         }
 
         .container {
@@ -304,13 +410,19 @@
         .timer-set button:focus-visible,
         .timer-btn:focus-visible,
         .btn-tiny:focus-visible,
-        .modal-close:focus-visible,
         .time-tab:focus-visible,
         .card:focus-visible,
         .chip:focus-visible,
         .swatch:focus-visible,
         .stat-pill:focus-visible {
             outline: 3px solid var(--focus);
+            outline-offset: 2px;
+        }
+
+        /* the close button sits on the coloured head of the card, where the
+           focus token is too dark in the solar theme */
+        .modal-close:focus-visible {
+            outline: 3px solid #fff;
             outline-offset: 2px;
         }
 
@@ -585,6 +697,11 @@
             color: var(--on-primary);
             padding: 1.5rem 2rem;
             border-radius: var(--r-lg) var(--r-lg) 0 0;
+            /* the card is long and the countdown has to stay visible while
+               the trainer reads it, so the head sticks to the top */
+            position: sticky;
+            top: 0;
+            z-index: 3;
         }
 
         .modal-header.morning { background: var(--glow); color: var(--vast); }
@@ -598,8 +715,33 @@
             line-height: 1.15;
             letter-spacing: -0.01em;
             margin-bottom: 0.4rem;
+            /* room for the close button: without it a long title runs under
+               the × and the text becomes unreadable (WCAG 2.4.11) */
+            padding-right: 2.75rem;
         }
         .modal-header .meta { color: inherit; opacity: .82; font-size: .88rem; }
+
+        /* the countdown has to stay visible while a card is open */
+        .modal-timer {
+            display: inline-flex;
+            align-items: center;
+            gap: .45rem;
+            margin-top: .85rem;
+            padding: .35rem .95rem;
+            border: 1px solid currentColor;
+            border-radius: 999px;
+            font-size: 1.05rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        .modal-timer[hidden] { display: none; }
+        .modal-timer .mt-label {
+            font-size: .68rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            opacity: .75;
+        }
 
         /* the pastel panels carry dark ink, so the meta line inherits it */
         .card-header.morning .card-meta,
@@ -1222,6 +1364,102 @@
 
         .modal-close:hover { background: rgba(0, 0, 0, .35); }
 
+        /* ---------- Client-side gate ----------
+           Used only where the host cannot check the password itself (GitHub
+           Pages). The whole page is hidden behind it until the password is
+           entered; see deploy/build-pages.mjs. */
+        .gate {
+            display: none;
+        }
+        html[data-gate="lock"] .gate {
+            display: flex;
+            min-height: 100vh;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+            background: var(--bg);
+        }
+        html[data-gate="lock"] body > *:not(.gate) {
+            display: none !important;
+        }
+        .gate-card {
+            width: min(380px, 100%);
+            background: var(--card-bg);
+            border: 1px solid var(--border-strong);
+            border-radius: var(--r-lg);
+            padding: 2rem 1.6rem;
+            text-align: center;
+        }
+        .gate-mark {
+            font-size: 2.2rem;
+            line-height: 1;
+            margin-bottom: .6rem;
+        }
+        .gate-card h1 {
+            font-family: var(--font-display);
+            font-size: 1.6rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            margin-bottom: .35rem;
+        }
+        .gate-sub {
+            color: var(--text-light);
+            font-size: .9rem;
+            margin-bottom: 1.4rem;
+        }
+        .gate-card label {
+            display: block;
+            text-align: left;
+            font-size: .8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .07em;
+            color: var(--text-light);
+            margin-bottom: .4rem;
+        }
+        .gate-card input {
+            width: 100%;
+            padding: .75rem .9rem;
+            font: inherit;
+            font-size: 1.05rem;
+            letter-spacing: .3em;
+            text-align: center;
+            border: 1px solid var(--border-strong);
+            border-radius: var(--r-md);
+            background: var(--card-bg);
+            color: var(--text);
+        }
+        .gate-card input:focus-visible {
+            outline: 3px solid var(--focus);
+            outline-offset: 2px;
+        }
+        .gate-card button {
+            width: 100%;
+            margin-top: .9rem;
+            padding: .8rem 1.2rem;
+            font: inherit;
+            font-size: 1rem;
+            font-weight: 600;
+            border: 1px solid var(--primary);
+            border-radius: 999px;
+            background: var(--primary);
+            color: var(--on-primary);
+            cursor: pointer;
+        }
+        .gate-card button:hover { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--on-accent-strong); }
+        .gate-card button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+        .gate-err {
+            min-height: 1.2em;
+            margin-top: .8rem;
+            font-size: .88rem;
+            color: var(--err-ink);
+        }
+        .gate-note {
+            margin-top: .8rem;
+            font-size: .78rem;
+            color: var(--text-light);
+        }
+
         /* ---------- Context block (parable / legend / method) ---------- */
         .context-block {
             background: var(--warn-bg);
@@ -1376,19 +1614,93 @@
                 transform: none !important;
             }
             .card-header { background: #eee !important; color: #000 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            .card::after { content: " (печать: откройте карточку и печатайте из неё)"; font-size: 8pt; color: #666; }
+            .card::after { content: " (для печати карточки откройте упражнение и нажмите «Печать»)"; font-size: 8pt; color: #666; }
         }
+
+        /* ---------- Print sheet ----------
+           Printing the scenario or a single exercise needs its own layout:
+           the panel and the modal are hidden in @media print, so a plain
+           window.print() used to produce the whole catalogue instead. */
+        .print-sheet { display: none; }
+
+        @media print {
+            body.printing-sheet .header,
+            body.printing-sheet .container,
+            body.printing-sheet .modal-overlay,
+            body.printing-sheet .toast-stack { display: none !important; }
+
+            body.printing-sheet .print-sheet {
+                display: block !important;
+                color: #000;
+                font-size: 11pt;
+                line-height: 1.45;
+            }
+        }
+
+        .print-sheet .ps-head {
+            border-bottom: 2px solid #000;
+            padding-bottom: 6pt;
+            margin-bottom: 12pt;
+        }
+        .print-sheet .ps-title {
+            font-size: 17pt;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        .print-sheet .ps-sub {
+            font-size: 10pt;
+            margin-top: 2pt;
+        }
+        .print-sheet .ps-list { margin: 0; padding-left: 18pt; }
+        .print-sheet .ps-list > li { margin-bottom: 12pt; break-inside: avoid; page-break-inside: avoid; }
+        .print-sheet .ps-name { font-size: 13pt; font-weight: 700; }
+        .print-sheet .ps-meta { font-size: 10pt; margin-bottom: 3pt; }
+        .print-sheet .ps-block { margin-bottom: 6pt; break-inside: avoid; page-break-inside: avoid; }
+        .print-sheet .ps-row { margin-bottom: 3pt; }
+        .print-sheet .ps-block ol,
+        .print-sheet .ps-block ul { margin: 2pt 0 2pt 16pt; }
+        .print-sheet .ps-key { border: 1px solid #000; padding: 6pt 8pt; margin-top: 10pt; }
+        .print-sheet .ps-key dl { margin: 0; }
+        .print-sheet .ps-key dt { font-weight: 700; margin-top: 4pt; }
+        .print-sheet .ps-key dd { margin: 1pt 0 0; }
+        .print-sheet .ps-note { font-size: 9pt; margin-top: 12pt; font-style: italic; }
 
         @media (max-width: 768px) {
             .cards-grid {
                 grid-template-columns: 1fr;
             }
 
+            /* the sticky head must not eat half of a phone screen */
+            .modal-header {
+                padding: 1rem 1.25rem;
+            }
+            .modal-header h2 {
+                padding-right: 2.4rem;
+            }
+            .modal-timer {
+                margin-top: .6rem;
+            }
+
+            /* the row turns into a column, and `align-items: center` would
+               then size every control by its content instead of the column:
+               the search field stayed 180px wide on a 390px screen */
             .controls-row {
                 flex-direction: column;
+                align-items: stretch;
+            }
+
+            .filter-group {
+                width: 100%;
             }
 
             .filter-group select, .filter-group input {
+                width: 100%;
+                min-width: 0;
+            }
+
+            /* the lone "Таймер" button is its own filter group with an empty
+               label; it has to take the full width like the other controls */
+            .filter-group .btn {
                 width: 100%;
             }
 
@@ -1408,6 +1720,22 @@
     </style>
 </head>
 <body>
+    <!-- Client-side gate: shown only where the host cannot check the password
+         itself. Hidden by default, so the local file opens without a prompt. -->
+    <div class="gate" id="clientGate">
+        <form class="gate-card" id="gateForm" autocomplete="off">
+            <div class="gate-mark" aria-hidden="true">🚂</div>
+            <h1>Ассистент тренера РЖД</h1>
+            <p class="gate-sub">Библиотека разминок и ледоколов для образовательных мероприятий</p>
+            <label for="gatePass">Пароль</label>
+            <input id="gatePass" name="p" type="password" inputmode="numeric"
+                   autocomplete="current-password" spellcheck="false" required>
+            <button type="submit">Войти</button>
+            <div class="gate-err" id="gateErr" role="alert" aria-live="assertive"></div>
+            <div class="gate-note">Вход запоминается в этом браузере.</div>
+        </form>
+    </div>
+
     <a class="visually-hidden" href="#cardsGrid">Перейти к каталогу упражнений</a>
     <header class="header">
         <h1>🚂 Ассистент тренера РЖД</h1>
@@ -1431,7 +1759,7 @@
         <!-- Stats -->
         <div class="stats-bar">
             <div class="stat-item">
-                <div class="stat-value" id="totalCount">66</div>
+                <div class="stat-value" id="totalCount">76</div>
                 <div class="stat-label">Всего упражнений</div>
             </div>
             <div class="stat-item">
@@ -1447,15 +1775,15 @@
                 <div class="stat-label">Мировые хиты</div>
             </div>
             <div class="stat-item">
-                <div class="stat-value" id="morningCount">23</div>
+                <div class="stat-value" id="morningCount">24</div>
                 <div class="stat-label">Утренние</div>
             </div>
             <div class="stat-item">
-                <div class="stat-value" id="afternoonCount">20</div>
+                <div class="stat-value" id="afternoonCount">26</div>
                 <div class="stat-label">После обеда</div>
             </div>
             <div class="stat-item">
-                <div class="stat-value" id="eveningCount">23</div>
+                <div class="stat-value" id="eveningCount">26</div>
                 <div class="stat-label">Вечерние</div>
             </div>
         </div>
@@ -1561,7 +1889,7 @@
         </div>
 
         <div class="result-bar">
-            <span id="resultCount" role="status" aria-live="polite">66 упражнений</span>
+            <span id="resultCount" role="status" aria-live="polite">76 упражнений</span>
             <div class="result-actions">
                 <button class="btn-tiny" onclick="resetFilters()">Сбросить фильтры</button>
             </div>
@@ -1602,10 +1930,18 @@
     <div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
         <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"
              onclick="event.stopPropagation()">
-            <button class="modal-close" onclick="closeModal()" aria-label="Закрыть">&times;</button>
             <div class="modal-header" id="modalHeader">
+                <!-- the button lives in the sticky head: as an absolutely
+                     positioned sibling it scrolled away with the card -->
+                <button class="modal-close" onclick="closeModal()" aria-label="Закрыть">&times;</button>
                 <h2 id="modalTitle"></h2>
+
                 <div class="meta" id="modalMeta"></div>
+                <div class="modal-timer" id="modalTimer" hidden>
+                    <span aria-hidden="true">⏱</span>
+                    <span id="modalTimerText">00:00</span>
+                    <span class="mt-label">осталось</span>
+                </div>
             </div>
             <div class="modal-body" id="modalBody">
             </div>
@@ -1613,6 +1949,10 @@
     </div>
 
     <div class="toast-stack" id="toastStack" aria-live="assertive" aria-atomic="false"></div>
+
+    <!-- filled in right before printing; the panel and the modal are hidden by
+         @media print, so the sheet is what actually reaches the paper -->
+    <div class="print-sheet" id="printSheet" aria-hidden="true"></div>
 
     <script>
         // Warm-up exercises data
@@ -1767,9 +2107,9 @@
                     tip: "Не выдавайте ответ сразу после первой попытки. Пусть группа соберёт версии, и только потом откройте правильный: момент «а ведь правда» работает сильнее, чем сама задача.",
                     adapt: "Больше 15 человек: не ждите единственного ответа, принимайте версии и голосуйте, это даёт больше обсуждения.",
                     answerKey: {
-                        "Вопрос": "Поезд №2 (Москва — Владивосток) отправляется одновременно с поездом №10 (Владивосток — Москва). Какой из них дойдёт до Владивостока раньше?",
-                        "Ответ": "Никакой. Время в пути одинаковое, а машинисты едут в разные стороны. Вопрос проверяет, оторвалось ли мышление от географии.",
-                        "Как обсуждать": "Попросите группу сначала записать ответ, потом задайте вопрос «а откуда вы это взяли». Обычно слышат «поезд №2 медленнее, потому что против течения» — хорошо работает как разбор мышления про скорость и направление."
+                        "Вопрос": "Каждый день в полдень из Москвы во Владивосток отправляется поезд, и одновременно из Владивостока в Москву — такой же. Время в пути — ровто неделя в каждом направлении. Вы садитесь на один из этих поездов в Москве. Сколько поездов встречного направления вы встретите в пути?",
+                        "Ответ": "15. Из них 13 вы встретите в дороге: поезда, отправленные из Владивостока от 6 дней назад до 6 дней вперёд. Ещё два — на станциях: тот, что прибывает в Москву ровно в момент вашего отправления, и тот, что отправляется из Владивостока ровно в момент вашего прибытия. Если группа называет 13 или 14, это не ошибка счёта, а решение о том, считать ли встречу на станции встречей.",
+                        "Как обсуждать": "Не выдавайте ответ после первой попытки: сначала попросите каждого записать число и обосновать его, и только потом открывайте ключ. Полезнее всего разбирать расхождение. Спросите, откуда в их счёте взялось 14, — обычно это «поезд, который выходит в день отправления, но ещё не развернулся»: он учитывается на одном конце маршрута и не учитывается на другом. Хорошо работает как разбор того, от чего зависит результат: от того, где вы проведёте границу учёта."
                     },
                     takeaway: "Скорость решения нередом уступает качеству формулировки.",
                 name: "Железнодорожная загадка",
@@ -1780,13 +2120,13 @@
                 description: "Классическая загадка из программ РЖД. Тренер зачитывает загадку о поездах Москва-Владивосток, участники записывают ответы.",
                 materials: ["Бумага и ручки для каждого участника", "Флипчарт или доска для записи ответов"],
                 steps: [
-                    "Каждый день в полдень из Москвы в Владивосток отправляется поезд",
+                    "Каждый день в полдень из Москвы во Владивосток отправляется поезд",
                     "Одновременно из Владивостока в Москву — такой же поезд",
                     "Время в пути — ровно одна неделя в каждом направлении",
-                    "Вы садитесь на один из этих поезд. Сколько поездов встречного направления вы встретите в пути?",
+                    "Вы садитесь на один из этих поездов. Сколько поездов встречного направления вы встретите в пути?",
                     "Дайте участникам 2 минуты на обсуждение в парах",
                     "Запишите ответы на доске",
-                    "Обсудите: правильный ответ — 15 встречных поездов"
+                    "Откройте ключ и разберите расхождение: одни называют 13, другие 14, третьи 15"
                 ],
                 purpose: "Активизация логического мышления, вовлечение через профессиональную тематику",
                 business: "Ошибка мышления, не связанная с предметной областью, стоит столько же, сколько ошибка в расчёте. Умение увидеть, откуда взялось ложное допущение, экономит время всей смены."
@@ -3531,9 +3871,11 @@
                     tip: "Готовьте 6–8 утверждений и показывайте по 4 за раунд. Утверждение, на котором группа спорит дольше минуты, разбирайте обязательно.",
                     adapt: "Больше 20: голосуйте поднятием рук, это быстрее карточек. Меньше 10: 4 утверждения достаточно, добавьте обсуждение.",
                     answerKey: {
-                        "Пример 1 — ПРАВДА": "Понятие «оборачивание вагона» появилось в 1878 году.",
-                        "Пример 2 — ЛОЖЬ": "Соглашение о взаимном использовании грузовых вагонов принято в 1943 году. На самом деле — 1889 год, в Дунайской комиссии. Ложь выглядит правдоподобно, потому что 1943 действительно был годом перестройки транспорта.",
-                        "Как обсуждать": "Готовьте 6–8 утверждений и показывайте по четыре за раунд. Обязательно разбирайте то, на что группа спорила дольше минуты: именно там ошибка в представлениях о собственной истории."
+                        "Утверждение 1 — ПРАВДА": "Понятие «оборачивание вагона» появилось в 1878 году.",
+                        "Утверждение 2 — ЛОЖЬ": "Соглашение о взаимном использовании грузовых вагонов принято в 1943 году. На самом деле — 1889 год, в Дунайской комиссии. Ложь выглядит правдоподобно, потому что 1943 действительно был годом перестройки транспорта.",
+                        "Утверждение 3 — ПРАВДА": "Первая железная дорога в России — Петергофская, она открылась в 1837 году.",
+                        "Утверждение 4 — ЛОЖЬ": "Первая железная дорога в России соединила Петербург с Москвой и открылась в 1851 году. На самом деле Петергофская дорога открылась раньше — в 1837 году, а Петербургско-Московская действительно открылась в 1851 году. Ложь собрана из двух верных фактов, соединённых неверным выводом.",
+                        "Как обсуждать": "Готовьте 6–8 утверждений и показывайте по четыре за раунд. Обязательно разбирайте то, на что группа спорила дольше минуты: именно там ошибка в представлениях о собственной истории. Утверждения 2 и 4 устроены одинаково — это два верных факта, соединённые неверным выводом, поэтому на них группа спорит дольше всего."
                     },
                     takeaway: "Понимание того, как сложился процесс, снижает сопротивление его изменению.",
                 name: "Четыре исторических факта",
@@ -3880,11 +4222,17 @@
             }
         ];
 
-        // Timer state
+        // Timer state. The countdown is derived from an absolute deadline rather
+        // than from a counter that ticks down: a background tab gets its timers
+        // throttled, and the trainer may reload the page, but the remaining
+        // time has to stay correct either way.
         let timerInterval = null;
         let timerSeconds = 0;
         let timerTarget = 0;
         let timerRunning = false;
+        let timerEndsAt = 0;
+        const TIMER_KEY = 'rzd-trainer-timer';
+        const BASE_TITLE = document.title;
 
         // Filter state
         let currentTimeFilter = 'all';
@@ -3967,15 +4315,37 @@
         }
 
         // ---------- Initialize ----------
-        document.addEventListener('DOMContentLoaded', () => {
+        function bootApp() {
             initTheme();
             loadChecklist();
             loadPlan();
+            loadTimer();
             buildChips();
             readUrl();
-            renderCards(exercises);
+            // filterCards, not renderCards: it applies the filters read from
+            // the URL and refreshes the result counter
+            filterCards();
             updateStats();
             renderPlan();
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // with the client-side gate on, the catalogue waits for the
+            // password: the gate calls bootApp() once the visitor is in
+            if (window.__GATE__ && window.__GATE__.enabled && !window.__GATE_OK__) {
+                window.__GATE_BOOT__ = bootApp;
+                return;
+            }
+            bootApp();
+        });
+
+        // A background tab has its timers throttled, so the countdown may pass
+        // zero while nobody is looking. Check the deadline on return.
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden || !timerRunning) return;
+            timerSeconds = timerRemaining();
+            if (timerSeconds <= 0) finishTimer();
+            else updateTimerDisplay();
         });
 
         function tabEnter(e, time, el) {
@@ -4204,22 +4574,50 @@
         function readUrl() {
             const p = new URLSearchParams(location.search);
             if (![...p.keys()].length) return;
-            const set = (id, v) => { if (v) document.getElementById(id).value = v; };
-            set('searchInput', p.get('q'));
-            set('typeFilter', p.get('ty'));
-            set('durationFilter', p.get('d'));
-            set('groupFilter', p.get('g'));
-            currentTimeFilter = p.get('t') || 'all';
-            currentSourceFilter = p.get('s') || 'all';
-            currentFormatFilter = p.get('f') || 'all';
+
+            // a hand-edited link must not filter everything away: every value
+            // is checked against the controls that actually exist
+            const setSelect = (id, v) => {
+                if (!v) return;
+                const el = document.getElementById(id);
+                if (!el) return;
+                if (el.tagName === 'SELECT') {
+                    if ([...el.options].some(o => o.value === v)) el.value = v;
+                } else {
+                    el.value = v;
+                }
+            };
+            const setChip = (groupId, v, fallback) => {
+                const chips = document.querySelectorAll(`#${groupId} .chip`);
+                return [...chips].some(c => c.dataset.value === v) ? v : fallback;
+            };
+            const setTab = (v, fallback) => {
+                const tabs = document.querySelectorAll('.time-tab');
+                return [...tabs].some(t => t.dataset.time === v) ? v : fallback;
+            };
+
+            setSelect('searchInput', p.get('q'));
+            setSelect('typeFilter', p.get('ty'));
+            setSelect('durationFilter', p.get('d'));
+            setSelect('groupFilter', p.get('g'));
+            currentTimeFilter = setTab(p.get('t'), 'all');
+            currentSourceFilter = setChip('sourceChips', p.get('s'), 'all');
+            currentFormatFilter = setChip('formatChips', p.get('f'), 'all');
+
             document.querySelectorAll('.time-tab').forEach(t => {
                 const a = t.dataset.time === currentTimeFilter;
                 t.classList.toggle('active', a);
                 t.setAttribute('aria-pressed', a ? 'true' : 'false');
             });
-            document.querySelectorAll('.chip').forEach(c =>
-                c.setAttribute('aria-pressed', c.dataset.value === currentSourceFilter ||
-                    (c.parentElement.id === 'formatChips' && c.dataset.value === currentFormatFilter) ? 'true' : 'false'));
+            // each chip belongs to one filter group, so the pressed state has
+            // to be read off that group: otherwise the "Все" chip of the other
+            // group lights up as well
+            document.querySelectorAll('.chip').forEach(c => {
+                const active = c.dataset.filter === 'source'
+                    ? c.dataset.value === currentSourceFilter
+                    : c.dataset.value === currentFormatFilter;
+                c.setAttribute('aria-pressed', active ? 'true' : 'false');
+            });
         }
 
         // ---------- Stats ----------
@@ -4294,14 +4692,97 @@
                     `   Цель: ${e.purpose}`,
                     `   Материалы: ${e.materials.length ? e.materials.join('; ') : 'не требуются'}`,
                     e.safety ? `   БЕЗОПАСНОСТЬ: ${e.safety}` : null,
-                    e.tip ? `   Ведущему: ${e.tip}` : null
+                    e.tip ? `   Ведущему: ${e.tip}` : null,
+                    // the key travels with the scenario: a trainer works from
+                    // the scenario, not from the exercise cards one by one
+                    e.answerKey
+                        ? `   КЛЮЧ ДЛЯ ВЕДУЩЕГО:\n${Object.entries(e.answerKey)
+                            .map(([k, v]) => `      ${k}: ${v}`).join('\n')}`
+                        : null
                 ].filter(Boolean).join('\n'))
             ].join('\n\n');
             copyText(text, 'Сценарий скопирован');
         }
 
         function printPlan() {
+            const items = plan.map(id => exercises.find(e => e.id === id)).filter(Boolean);
+            if (!items.length) { toast('Сценарий пуст', 'warn'); return; }
+            const mins = items.reduce((s, e) => s + e.duration, 0);
+
+            const rows = items.map(e => {
+                const key = e.answerKey
+                    ? `<div class="ps-block ps-key"><b>Ключ для ведущего</b><dl>${
+                        Object.entries(e.answerKey)
+                            .map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')
+                      }</dl></div>`
+                    : '';
+                return `<li>
+                    <div class="ps-name">${e.name}</div>
+                    <div class="ps-meta">${e.duration} мин · ${timeLabels[e.time]} · ${groupLabels[e.group]} · ${formatLabels[e.format]} · ${sourceLabels[e.source]}</div>
+                    <div class="ps-row"><b>Цель:</b> ${e.purpose}</div>
+                    <div class="ps-row"><b>Материалы:</b> ${e.materials.length ? e.materials.join('; ') : 'не требуются'}</div>
+                    ${e.safety ? `<div class="ps-row"><b>Безопасность:</b> ${e.safety}</div>` : ''}
+                    ${e.tip ? `<div class="ps-row"><b>Ведущему:</b> ${e.tip}</div>` : ''}
+                    ${key}
+                </li>`;
+            }).join('');
+
+            printSheetHtml(`
+                <div class="ps-head">
+                    <div class="ps-title">Сценарий тренинга</div>
+                    <div class="ps-sub">${items.length} ${plural(items.length, 'упражнение', 'упражнения', 'упражнений')} · ${mins} ${plural(mins, 'минута', 'минуты', 'минут')} чистого времени · Ассистент тренера РЖД</div>
+                </div>
+                <ol class="ps-list">${rows}</ol>
+                <div class="ps-note">Документ для ведущего: содержит ключи ответов и требования безопасности. Не раздавать участникам.</div>`);
+        }
+
+        function printExercise(id) {
+            const e = exercises.find(x => x.id === id);
+            if (!e) return;
+            const key = e.answerKey
+                ? `<div class="ps-block ps-key"><b>Ключ для ведущего</b><dl>${
+                    Object.entries(e.answerKey)
+                        .map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')
+                  }</dl></div>`
+                : '';
+            const ctx = e.context
+                ? `<div class="ps-block"><b>${e.format === 'facilitation' ? 'О методе' : 'Контекст и легенда'}.</b> ${escapeHtml(e.context).replace(/\n\n/g, '<br>').replace(/\n/g, '<br>')}</div>`
+                : '';
+
+            printSheetHtml(`
+                <div class="ps-head">
+                    <div class="ps-title">${e.name}</div>
+                    <div class="ps-sub">${e.duration} мин · ${timeLabels[e.time]} · ${groupLabels[e.group]} · ${formatLabels[e.format]} · нагрузка ${loadLabels[e.intensity]} · ${sourceLabels[e.source]}</div>
+                </div>
+                ${ctx}
+                <div class="ps-block"><b>Описание.</b> ${e.description}</div>
+                <div class="ps-block"><b>Зачем это участникам.</b> ${e.takeaway || e.purpose}</div>
+                <div class="ps-block"><b>Пошаговая инструкция</b><ol>${e.steps.map(s => `<li>${s}</li>`).join('')}</ol></div>
+                <div class="ps-block"><b>Материалы</b><ul>${(e.materials.length ? e.materials : ['не требуются']).map(m => `<li>${m}</li>`).join('')}</ul></div>
+                <div class="ps-block"><b>Цель упражнения.</b> ${e.purpose}</div>
+                <div class="ps-block"><b>Бизнес-связка.</b> ${e.business}</div>
+                ${e.tip ? `<div class="ps-block"><b>Подсказка ведущему.</b> ${e.tip}</div>` : ''}
+                ${e.safety ? `<div class="ps-block"><b>Безопасность.</b> ${e.safety}</div>` : ''}
+                ${e.adapt ? `<div class="ps-block"><b>Другая численность группы.</b> ${e.adapt}</div>` : ''}
+                ${key}
+                <div class="ps-note">Карточка для ведущего: содержит ключ ответов и требования безопасности. Не раздавать участникам.</div>`);
+        }
+
+        function printSheetHtml(html) {
+            const sheet = document.getElementById('printSheet');
+            sheet.innerHTML = html;
+            document.body.classList.add('printing-sheet');
+            const cleanup = () => {
+                document.body.classList.remove('printing-sheet');
+                sheet.innerHTML = '';
+                window.removeEventListener('afterprint', cleanup);
+            };
+            window.addEventListener('afterprint', cleanup);
             window.print();
+            // afterprint covers every current browser; the timer is a net for
+            // the ones that do not fire it. Safari shows its print panel
+            // without blocking, so the net has to outlast a slow dialog.
+            setTimeout(cleanup, 30000);
         }
 
         // ---------- Toasts ----------
@@ -4414,6 +4895,7 @@
                         ${inPlan ? '★ Убрать из сценария' : '☆ В сценарий'}
                     </button>
                     <button class="btn btn-secondary" onclick="copyExercise(${ex.id})">📋 Копировать</button>
+                    <button class="btn btn-secondary" onclick="printExercise(${ex.id})">🖨 Печать</button>
                     <button class="btn btn-secondary" onclick="renderChecklist(${ex.id}); document.getElementById('checklistPanel').scrollIntoView({behavior:'smooth', block:'start'})">✅ Чек-лист</button>
                 </div>`;
 
@@ -4575,18 +5057,80 @@
 
         function setTimer(minutes, el) {
             if (!minutes || minutes <= 0) return;
+            const wasRunning = timerRunning;
             timerTarget = Math.round(minutes * 60);
             timerSeconds = timerTarget;
+            timerEndsAt = 0;
+            timerRunning = false;
             updateTimerDisplay();
+            saveTimer();
 
             document.querySelectorAll('.timer-set button').forEach(btn => btn.classList.remove('active'));
             if (el && el.classList.contains('timer-set-button')) el.classList.add('active');
+            if (wasRunning) startTimer();
         }
 
         function startTimerForExercise(minutes) {
             document.getElementById('timerPanel').classList.add('active');
             setTimer(minutes);
             startTimer();
+            toast('⏱ Таймер запущен', 'ok',
+                `${minutes} мин — отсчёт виден в карточке и в заголовке вкладки.`);
+        }
+
+        // how much is left, always recomputed from the deadline
+        function timerRemaining() {
+            if (!timerRunning) return timerSeconds;
+            return Math.max(0, Math.round((timerEndsAt - Date.now()) / 1000));
+        }
+
+        function saveTimer() {
+            try {
+                localStorage.setItem(TIMER_KEY, JSON.stringify({
+                    target: timerTarget,
+                    endsAt: timerEndsAt,
+                    running: timerRunning,
+                    seconds: timerSeconds
+                }));
+            } catch (e) { /* private mode — просто не сохраняем */ }
+        }
+
+        function loadTimer() {
+            try {
+                const raw = localStorage.getItem(TIMER_KEY);
+                if (!raw) return;
+                const t = JSON.parse(raw);
+                timerTarget = t.target || 0;
+                if (t.running && t.endsAt) {
+                    const left = Math.round((t.endsAt - Date.now()) / 1000);
+                    if (left > 0) {
+                        // keep the original deadline: the time that passed
+                        // while the page was closed must still count
+                        timerEndsAt = t.endsAt;
+                        timerSeconds = left;
+                        document.getElementById('timerPanel').classList.add('active');
+                        startTimer();
+                        return;
+                    }
+                }
+                if (t.seconds) {
+                    timerSeconds = t.seconds;
+                    document.getElementById('timerPanel').classList.add('active');
+                }
+            } catch (e) { /* ignore */ }
+            updateTimerDisplay();
+        }
+
+        function finishTimer() {
+            if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+            timerRunning = false;
+            timerSeconds = 0;
+            timerEndsAt = 0;
+            saveTimer();
+            updateTimerDisplay();
+            beep();
+            toast('⏰ Время вышло', 'warn',
+                  'Таймер на нуле. Пора подвести итог и собрать группу.');
         }
 
         function startTimer() {
@@ -4597,30 +5141,38 @@
             }
 
             timerRunning = true;
-            timerInterval = setInterval(() => {
-                timerSeconds--;
-                updateTimerDisplay();
+            // a deadline that is already set comes from a restored timer and
+            // must not be extended
+            if (!timerEndsAt) timerEndsAt = Date.now() + timerSeconds * 1000;
+            saveTimer();
+            if (!timerInterval) timerInterval = setInterval(timerTick, 1000);
+            updateTimerDisplay();
+        }
 
-                if (timerSeconds <= 0) {
-                    clearInterval(timerInterval);
-                    timerRunning = false;
-                    updateTimerDisplay();
-                    beep();
-                    toast('⏰ Время вышло', 'warn',
-                          'Таймер на нуле. Пора подвести итог и собрать группу.');
-                }
-            }, 1000);
+        function timerTick() {
+            timerSeconds = timerRemaining();
+            if (timerSeconds <= 0) {
+                finishTimer();
+                return;
+            }
+            updateTimerDisplay();
         }
 
         function pauseTimer() {
-            clearInterval(timerInterval);
+            if (timerRunning) timerSeconds = timerRemaining();
+            if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
             timerRunning = false;
+            timerEndsAt = 0;
+            saveTimer();
+            updateTimerDisplay();
         }
 
         function resetTimer() {
-            clearInterval(timerInterval);
+            if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
             timerRunning = false;
             timerSeconds = timerTarget;
+            timerEndsAt = 0;
+            saveTimer();
             updateTimerDisplay();
         }
 
@@ -4647,10 +5199,12 @@
         }
 
         function updateTimerDisplay() {
+            if (timerRunning) timerSeconds = timerRemaining();
             const display = document.getElementById('timerDisplay');
             const mins = Math.floor(timerSeconds / 60);
             const secs = timerSeconds % 60;
-            display.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            const text = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            display.textContent = text;
 
             display.className = 'timer-display';
             if (timerSeconds <= 60 && timerSeconds > 10) {
@@ -4658,6 +5212,21 @@
             } else if (timerSeconds <= 10) {
                 display.classList.add('danger');
             }
+
+            // The timer panel lives under the modal overlay, so a card opened
+            // during the exercise would hide the countdown. The card carries
+            // its own readout for exactly that case.
+            const modalTimer = document.getElementById('modalTimer');
+            if (modalTimer) {
+                modalTimer.hidden = !(timerRunning || timerSeconds > 0);
+                document.getElementById('modalTimerText').textContent = text;
+            }
+
+            // The tab title is the one place the countdown stays visible when
+            // the trainer switches to another tab to run the exercise.
+            document.title = timerRunning
+                ? `⏱ ${text} — Ассистент тренера РЖД`
+                : BASE_TITLE;
         }
 
         // ---------- Keyboard ----------

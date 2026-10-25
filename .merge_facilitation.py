@@ -54,6 +54,9 @@ NAME_RE = re.compile(r'^\s*name: "(?:[^"\\]|\\.)*",$', re.M)
 # so each name line must be paired with the nearest source line above it.
 SRC_RE = re.compile(r'^\s*source: "\w+",$', re.M)
 HAVE_RE = re.compile(r'^\s*format: "\w+",$', re.M)
+# an answerKey block: `answerKey: {` … entries … `},` with the closing brace
+# at the same indent as the field itself
+KEY_RE = re.compile(r'^([ \t]*)answerKey: \{.*?^\1\},\n', re.M | re.S)
 
 sources = [(m.start(), m.end()) for m in SRC_RE.finditer(html)]
 
@@ -71,6 +74,7 @@ for m in NAME_RE.finditer(html):
     targets.append((above[-1][1], indent, name))
 
 merged, missing, added_fields = 0, [], []
+keys_updated = []
 for pos, indent, name in reversed(targets):
     # additive + idempotent: only insert the fields this exercise still lacks.
     # the window must end where the next exercise's `source:` line begins,
@@ -78,6 +82,17 @@ for pos, indent, name in reversed(targets):
     nxt = next((s for s, _ in sources if s > pos), len(html))
     window = html[pos:nxt]
     existing = set(re.findall(r'^\s*(\w+):', window, re.M))
+
+    # an answerKey that already exists is rewritten from the source of truth,
+    # so the key and the instruction cannot drift apart
+    if name in fac.ANSWER_KEY and 'answerKey' in existing:
+        want = (f'{" " * (indent + 4)}answerKey: '
+                f'{js_val(fac.ANSWER_KEY[name], indent + 4)},\n')
+        cur = KEY_RE.search(window)
+        if cur and cur.group(0) != want:
+            window = window[:cur.start()] + want + window[cur.end():]
+            html = html[:pos] + window + html[nxt:]
+            keys_updated.append(name)
 
     todo = [(k, v) for k, v in build(name).items() if k not in existing]
     if not todo:
@@ -93,6 +108,8 @@ print(f'updated {merged} exercises, {len(added_fields)} fields inserted')
 if added_fields:
     from collections import Counter
     print('  by field:', dict(Counter(added_fields)))
+if keys_updated:
+    print('  answerKey rewritten from .facilitation.py:', ', '.join(keys_updated))
 if missing:
     print('PROBLEMS:', missing)
 

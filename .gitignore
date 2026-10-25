@@ -17,6 +17,10 @@ _archive/
 # командой  node deploy/build-gate.mjs
 deploy/api/_page.js
 
+# Собранная страница для GitHub Pages: артефакт сборки, в репозитории не нужна.
+# Восстанавливается командой  node deploy/build-pages.mjs
+docs/
+
 # Секреты (если решите хранить локально, а не в переменной Vercel)
 .env
 .env.local

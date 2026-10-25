@@ -78,7 +78,7 @@ for n, e in enumerate(ex, 1):
     if p:
         bad.append(f'#{n} {e["name"]}: {",".join(p)}')
 
-check('all 66 exercises match index.html exactly', not bad)
+check(f'all {len(ex)} exercises match index.html exactly', not bad)
 for x in bad:
     print('      MISMATCH', x)
 

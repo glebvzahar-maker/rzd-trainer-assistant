@@ -79,7 +79,9 @@ for pos, indent, name in reversed(targets):
     ctx_added += 1
 
 # ---------- 2. facilitation tools -----------------------------------------
-existing_ids = set(re.findall(r'^\s*id: (\d+),', html, re.M))
+# the ids in the page are read as strings, the ids in the data are ints:
+# comparing them as-is never matched and the tools were added twice
+existing_ids = {int(x) for x in re.findall(r'^\s*id: (\d+),', html, re.M)}
 new_ids = [t['id'] for t in tools.FACILITATION]
 to_add = [t for t in tools.FACILITATION if t['id'] not in existing_ids]
 if to_add:
@@ -130,3 +132,10 @@ print(f'contexts added: {ctx_added}')
 print(f'facilitation tools added: {len(to_add)} (ids {", ".join(str(t["id"]) for t in to_add)})')
 if existing_ids & set(new_ids):
     print('already present, skipped:', sorted(existing_ids & set(new_ids)))
+
+# a second run must not change anything: the tools are inserted as whole
+# objects, so a duplicate would break the catalog silently
+after = {int(x) for x in re.findall(r'^\s*id: (\d+),', html, re.M)}
+if len(after) != len(existing_ids) + len(to_add):
+    print('WARNING: id count does not match the additions:', len(after),
+          'expected', len(existing_ids) + len(to_add))
