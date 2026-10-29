@@ -22,6 +22,10 @@ FORMAT_LABELS = {
     'facilitation': 'Фасилитация',
 }
 LOAD_LABELS = {1: 'низкая', 2: 'средняя', 3: 'высокая'}
+AUDIENCE_LABELS = {
+    'any': 'любой состав — в группе из одних женщин, из одних мужчин и в смешанной',
+    'mixed': 'в смешанной группе проходит как есть; в группе одного пола контакт заменить',
+}
 SOURCE_LABELS = {
     'rzd': 'Материалы РЖД',
     'kipnis': 'Михаил Кипнис, «Большая книга игр и упражнений» (2014)',
@@ -142,6 +146,19 @@ def build(ex):
             w(f'- [{e["_n"]}. {e["name"]}](#ex-{e["_n"]}) — {head}')
         w('')
 
+    single_only = [e for e in ex if e.get('audience') == 'mixed']
+    if single_only:
+        w('## 👥 Упражнения, требующие замены контакта в группе одного пола')
+        w('')
+        w('Ни одно упражнение каталога не привязано к полу участников. Ограничение одно — '
+          'тактильный контакт: в смешанной группе он воспринимается естественно, а в группе '
+          'из одних женщин или одних мужчин у части участников вызывает скованность. '
+          'У этих упражнений контакт вынужденный, поэтому для однородной группы он заменяется.')
+        w('')
+        for e in single_only:
+            w(f'- **[{e["_n"]}. {e["name"]}](#ex-{e["_n"]})** — {e["audienceNote"]}')
+        w('')
+
     fac = [e for e in ex if e['format'] == 'facilitation']
     if fac:
         w('## 🧭 Инструменты фасилитации')
@@ -172,6 +189,7 @@ def build(ex):
     for e in ex:
         flags = ' ⚠' if e.get('safety') else ''
         flags += ' 🔑' if e.get('answerKey') else ''
+        flags += ' 👥' if e.get('audience') == 'mixed' else ''
         w(f'{e["_n"]}. [{e["name"]}](#ex-{e["_n"]}) — {e["duration"]} мин, '
           f'{TIME_LABELS[e["time"]]}, {FORMAT_LABELS[e["format"]]}{flags}')
     w('')
@@ -232,6 +250,9 @@ def build(ex):
             w('**🔧 Другая численность группы.** ' + e['adapt'])
             w('')
             w('**💼 Бизнес-связка.** ' + e['business'])
+            w('')
+            w('**👥 Состав аудитории.** ' + AUDIENCE_LABELS[e.get('audience', 'any')]
+              + (' ' + e['audienceNote'] if e.get('audienceNote') else ''))
             w('')
             if e.get('answerKey'):
                 w('**🔑 Ключ для ведущего**')

@@ -21,6 +21,10 @@ deploy/api/_page.js
 # Восстанавливается командой  node deploy/build-pages.mjs
 docs/
 
+# Предпросмотр иконки: артефакт, генерируется .build_icon.py
+.icon-preview.png
+.icon-sizes.png
+
 # Секреты (если решите хранить локально, а не в переменной Vercel)
 .env
 .env.local

@@ -1,5 +1,5 @@
 // Validation + JSON dump for the exercises array
-var req = ['id','source','name','time','duration','group','types','description','materials','steps','purpose','business','format','intensity','contact','tip','adapt','takeaway'];
+var req = ['id','source','name','time','duration','group','types','description','materials','steps','purpose','business','format','intensity','contact','tip','adapt','takeaway','audience'];
 var validFormat = ['ledokol','energizer','reflection','activity','facilitation'];
 var validSource = ['rzd','kipnis','eremeeva','world','facilitation'];
 var validTypes = ['energy','team','comm','focus','creative','pro'];
@@ -20,6 +20,10 @@ exercises.forEach(function (e) {
   if (typeof e.contact !== 'boolean') { console.log('BAD contact', e.id, e.contact); bad++; }
   if (e.format === 'facilitation' && (!e.tip || !e.adapt || !e.takeaway)) { console.log('THIN facilitation meta', e.id); bad++; }
   if (!['small','medium','large'].includes(e.group)) { console.log('BAD group', e.id, e.group); bad++; }
+  // состав целевой аудитории: 'any' — подходит любой группе,
+  // 'mixed' — в однородной группе контакт нужно заменить
+  if (!['any','mixed'].includes(e.audience)) { console.log('BAD audience', e.id, e.audience); bad++; }
+  if (e.audience === 'mixed' && !e.audienceNote) { console.log('NO audienceNote', e.id); bad++; }
   // facilitation tools are whole events, so they run far longer than a warm-up
   const maxDur = e.format === 'facilitation' ? 180 : 30;
   if (typeof e.duration !== 'number' || e.duration < 3 || e.duration > maxDur) { console.log('BAD duration', e.id, e.duration); bad++; }

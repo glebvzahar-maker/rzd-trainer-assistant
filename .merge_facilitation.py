@@ -46,6 +46,11 @@ def build(name):
                      (fac.ANSWER_KEY, 'answerKey'), (fac.TAKEAWAY, 'takeaway')):
         if name in src:
             meta[key] = src[name]
+    # состав целевой аудитории: заполняется всегда, иначе фильтр по
+    # аудитории считает упражнение подходящим для любого состава
+    meta['audience'] = fac.AUDIENCE.get(name, 'any')
+    if name in fac.AUDIENCE_NOTE:
+        meta['audienceNote'] = fac.AUDIENCE_NOTE[name]
     return meta
 
 
@@ -57,6 +62,11 @@ HAVE_RE = re.compile(r'^\s*format: "\w+",$', re.M)
 # an answerKey block: `answerKey: {` … entries … `},` with the closing brace
 # at the same indent as the field itself
 KEY_RE = re.compile(r'^([ \t]*)answerKey: \{.*?^\1\},\n', re.M | re.S)
+# single-line fields that are rewritten from the source of truth
+SCALAR_RE = {
+    'audience': re.compile(r'^([ \t]*)audience: "[^"]*",\n', re.M),
+    'audienceNote': re.compile(r'^([ \t]*)audienceNote: "(?:[^"\\]|\\.)*",\n', re.M),
+}
 
 sources = [(m.start(), m.end()) for m in SRC_RE.finditer(html)]
 
@@ -93,6 +103,22 @@ for pos, indent, name in reversed(targets):
             window = window[:cur.start()] + want + window[cur.end():]
             html = html[:pos] + window + html[nxt:]
             keys_updated.append(name)
+
+    # the same for the audience fields: the classification is edited in one
+    # place, and a stale value in the page would filter the wrong exercises
+    for field, regex in SCALAR_RE.items():
+        if field == 'audience':
+            want = f'{" " * (indent + 4)}audience: "{fac.AUDIENCE.get(name, "any")}",\n'
+        else:
+            if name not in fac.AUDIENCE_NOTE:
+                continue
+            want = (f'{" " * (indent + 4)}audienceNote: '
+                    f'{js_str(fac.AUDIENCE_NOTE[name])},\n')
+        cur = regex.search(window)
+        if cur and cur.group(0) != want:
+            window = window[:cur.start()] + want + window[cur.end():]
+            html = html[:pos] + window + html[nxt:]
+            keys_updated.append(f'{name}.{field}')
 
     todo = [(k, v) for k, v in build(name).items() if k not in existing]
     if not todo:

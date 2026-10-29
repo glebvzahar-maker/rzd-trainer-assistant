@@ -69,6 +69,9 @@ for n, e in enumerate(ex, 1):
     # optional blocks
     if e.get('safety') and f'**⚠ Безопасность.** {e["safety"]}' not in b: p.append('safety')
     if not e.get('safety') and 'Безопасность.**' in b: p.append('phantom-safety')
+    if '**👥 Состав аудитории.** ' not in b: p.append('audience')
+    if e.get('audience') == 'mixed' and e.get('audienceNote'):
+        if e['audienceNote'] not in b: p.append('audienceNote')
     if e.get('answerKey'):
         if '**🔑 Ключ для ведущего**' not in b: p.append('answerKey-missing')
         else:

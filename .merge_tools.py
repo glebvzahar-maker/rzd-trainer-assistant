@@ -104,9 +104,11 @@ if to_add:
         + '                format: "facilitation",\n'
         + '                intensity: 1,\n'
         + '                contact: false,\n'
-        + f'                takeaway: {js_str(t["takeaway"])},\n'
-        + f'                tip: {js_str(t["tip"])},\n'
-        + f'                adapt: {js_str(t["adapt"])},\n'
+                + f'                takeaway: {js_str(t["takeaway"])},\n'
+                + f'                tip: {js_str(t["tip"])},\n'
+                + f'                adapt: {js_str(t["adapt"])},\n'
+                + '                audience: "any",\n'
+
         + (f'                context: {js_str(t["context"])},\n' if t.get('context') else '')
         + (('                answerKey: {\n'
             + ',\n'.join(f'                    {js_str(k)}: {js_val(v, 20)}'
@@ -132,6 +134,39 @@ print(f'contexts added: {ctx_added}')
 print(f'facilitation tools added: {len(to_add)} (ids {", ".join(str(t["id"]) for t in to_add)})')
 if existing_ids & set(new_ids):
     print('already present, skipped:', sorted(existing_ids & set(new_ids)))
+
+# ---------- 3. audience field of the tools already in the page ----------
+# the tools are inserted as whole objects, so a field added later would
+# otherwise never reach the page
+AUDIENCE_RE = re.compile(r'^([ \t]*)audience: "[^"]*",\n', re.M)
+audience_fixed = 0
+for t in tools.FACILITATION:
+    if t['id'] not in existing_ids:
+        continue
+    m = re.search(r'^\s*id: %d,' % t['id'], html, re.M)
+    if not m:
+        continue
+    nxt = re.search(r'^\s*id: \d+,', html[m.end():], re.M)
+    end = m.end() + (nxt.start() if nxt else len(html) - m.end())
+    window = html[m.start():end]
+    want = '                audience: "any",\n'
+    cur = AUDIENCE_RE.search(window)
+    if cur:
+        if cur.group(0) != want:
+            window = window[:cur.start()] + want + window[cur.end():]
+            html = html[:m.start()] + window + html[end:]
+            audience_fixed += 1
+    else:
+        anchor = re.search(r'^([ \t]*)contact: (?:true|false),\n', window, re.M)
+        if anchor:
+            pos = anchor.end()
+            window = window[:pos] + want + window[pos:]
+            html = html[:m.start()] + window + html[end:]
+            audience_fixed += 1
+
+if audience_fixed:
+    io.open(HTML, 'w', encoding='utf-8').write(html)
+    print(f'audience field added to {audience_fixed} facilitation tools')
 
 # a second run must not change anything: the tools are inserted as whole
 # objects, so a duplicate would break the catalog silently
